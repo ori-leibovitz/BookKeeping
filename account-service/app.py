@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, g
 from flask_cors import CORS
 import uuid
 from datetime import datetime
@@ -6,14 +6,18 @@ from sqlalchemy import create_engine, text
 from contextlib import contextmanager
 import os
 from metrics_middleware import setup_metrics
+from auth_middleware import require_auth
+from permissions import require_role, is_admin, can_modify
 
 app = Flask(__name__)
 CORS(app)
+
+# 🎯 הפעלת Monitoring
 setup_metrics(app)
 
-# Configuration
+# 🔧 Configuration מ-Environment Variables
 DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:example@localhost:5432/mydatabase')
-
+SERVICE_PORT = int(os.environ.get('SERVICE_PORT', 5002))
 
 # Database setup
 engine = create_engine(DATABASE_URL)
@@ -31,120 +35,144 @@ def get_db_connection():
     finally:
         connection.close()
 
-def verify_user(token):
-    """Verify user token with User Service (gRPC call in future)"""
-    # TODO: Call User Service via gRPC to verify token
-    # For now, we'll do simple JWT decode
-    import jwt
-    try:
-        payload = jwt.decode(token, os.environ.get('JWT_SECRET_KEY', 'dev-secret-key'), algorithms=['HS256'])
-        return payload['user_id']
-    except:
-        return None
-
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({"status": "ok", "service": "account-service"}), 200
 
 @app.route('/accounts', methods=['POST'])
+@require_auth
+@require_role('admin', 'user')
 def create_account():
-    """Create a new bank account"""
-    # Get token from header
-    auth_header = request.headers.get('Authorization')
-    if not auth_header or not auth_header.startswith('Bearer '):
-        return jsonify({"error": "Unauthorized"}), 401
-    
-    token = auth_header.split(' ')[1]
-    user_id = verify_user(token)
-    
-    if not user_id:
-        return jsonify({"error": "Invalid token"}), 401
+    """Create a new bank account - Only admin and user"""
+    user_id = g.user_id
     
     data = request.get_json()
+    
+    # Validation
+    balance_cents = data.get('balance_cents', 0)
+    if balance_cents < 0:
+        return jsonify({"error": "Initial balance cannot be negative"}), 400
     
     account_id = str(uuid.uuid4())
     account_number = str(uuid.uuid4())
     
-    with get_db_connection() as connection:
-        connection.execute(
-            text(
-                "INSERT INTO accounts (id, owner_id, account_number, type, balance_cents, created_at, updated_at) "
-                "VALUES (:account_id, :owner_id, :account_number, :type, :balance_cents, :created_at, :updated_at)"
-            ),
-            {
-                'account_id': account_id,
-                'owner_id': user_id,
-                'account_number': account_number,
-                'type': data.get('type', 'checking'),
-                'balance_cents': data.get('balance_cents', 0),
-                'created_at': datetime.now(),
-                'updated_at': datetime.now()
-            }
-        )
+    try:
+        with get_db_connection() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO accounts (id, owner_id, account_number, type, balance_cents, created_at, updated_at) "
+                    "VALUES (:account_id, :owner_id, :account_number, :type, :balance_cents, :created_at, :updated_at)"
+                ),
+                {
+                    'account_id': account_id,
+                    'owner_id': user_id,
+                    'account_number': account_number,
+                    'type': data.get('type', 'checking'),
+                    'balance_cents': balance_cents,
+                    'created_at': datetime.now(),
+                    'updated_at': datetime.now()
+                }
+            )
+        
+        return jsonify({"id": account_id, "account_number": account_number}), 201
     
-    return jsonify({"id": account_id, "account_number": account_number}), 201
+    except Exception as e:
+        app.logger.error(f"Failed to create account: {str(e)}")
+        return jsonify({"error": "Internal server error", "message": "Failed to create account"}), 500
 
 @app.route('/accounts', methods=['GET'])
+@require_auth
+@require_role('admin', 'user', 'viewer')  # כולם יכולים לראות
 def list_accounts():
-    """List all accounts for authenticated user"""
-    auth_header = request.headers.get('Authorization')
-    if not auth_header or not auth_header.startswith('Bearer '):
-        return jsonify({"error": "Unauthorized"}), 401
+    """List accounts - Admin sees all, others see only their own"""
+    user_id = g.user_id
     
-    token = auth_header.split(' ')[1]
-    user_id = verify_user(token)
-    
-    if not user_id:
-        return jsonify({"error": "Invalid token"}), 401
-    
-    with get_db_connection() as connection:
-        accounts = connection.execute(
-            text("SELECT * FROM accounts WHERE owner_id = :owner_id"),
-            {'owner_id': user_id}
-        ).fetchall()
+    # Admin can see all accounts
+    if is_admin():
+        try:
+            with get_db_connection() as connection:
+                accounts = connection.execute(
+                    text("SELECT * FROM accounts ORDER BY created_at DESC")
+                ).fetchall()
+                
+                account_list = [
+                    {
+                        'id': str(acc.id),
+                        'owner_id': str(acc.owner_id),
+                        'account_number': acc.account_number,
+                        'type': acc.type,
+                        'balance_cents': acc.balance_cents,
+                        'created_at': acc.created_at.isoformat()
+                    }
+                    for acc in accounts
+                ]
+            
+            return jsonify({"accounts": account_list, "view": "admin", "total": len(account_list)}), 200
         
-        account_list = [
-            {
-                'id': str(acc.id),
-                'account_number': acc.account_number,
-                'type': acc.type,
-                'balance_cents': acc.balance_cents,
-                'created_at': acc.created_at.isoformat()
-            }
-            for acc in accounts
-        ]
+        except Exception as e:
+            app.logger.error(f"Failed to list accounts: {str(e)}")
+            return jsonify({"error": "Internal server error"}), 500
     
-    return jsonify({"accounts": account_list}), 200
+    # Regular users see only their own accounts
+    try:
+        with get_db_connection() as connection:
+            accounts = connection.execute(
+                text("SELECT * FROM accounts WHERE owner_id = :owner_id ORDER BY created_at DESC"),
+                {'owner_id': user_id}
+            ).fetchall()
+            
+            account_list = [
+                {
+                    'id': str(acc.id),
+                    'account_number': acc.account_number,
+                    'type': acc.type,
+                    'balance_cents': acc.balance_cents,
+                    'created_at': acc.created_at.isoformat()
+                }
+                for acc in accounts
+            ]
+        
+        return jsonify({"accounts": account_list}), 200
+    
+    except Exception as e:
+        app.logger.error(f"Failed to list accounts: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @app.route('/accounts/<account_id>', methods=['GET'])
+@require_auth
 def get_account(account_id):
-    """Get specific account details"""
-    auth_header = request.headers.get('Authorization')
-    if not auth_header or not auth_header.startswith('Bearer '):
-        return jsonify({"error": "Unauthorized"}), 401
+    """Get specific account details - Admin can see any, others only their own"""
+    user_id = g.user_id
     
-    token = auth_header.split(' ')[1]
-    user_id = verify_user(token)
+    try:
+        with get_db_connection() as connection:
+            # Admin can see any account
+            if is_admin():
+                account = connection.execute(
+                    text("SELECT * FROM accounts WHERE id = :account_id"),
+                    {'account_id': account_id}
+                ).fetchone()
+            else:
+                # Regular users can only see their own accounts
+                account = connection.execute(
+                    text("SELECT * FROM accounts WHERE id = :account_id AND owner_id = :owner_id"),
+                    {'account_id': account_id, 'owner_id': user_id}
+                ).fetchone()
+            
+            if not account:
+                return jsonify({"error": "Account not found"}), 404
+            
+            return jsonify({
+                'id': str(account.id),
+                'account_number': account.account_number,
+                'type': account.type,
+                'balance_cents': account.balance_cents,
+                'created_at': account.created_at.isoformat()
+            }), 200
     
-    if not user_id:
-        return jsonify({"error": "Invalid token"}), 401
-    
-    with get_db_connection() as connection:
-        account = connection.execute(
-            text("SELECT * FROM accounts WHERE id = :account_id AND owner_id = :owner_id"),
-            {'account_id': account_id, 'owner_id': user_id}
-        ).fetchone()
-        
-        if not account:
-            return jsonify({"error": "Account not found"}), 404
-        
-        return jsonify({
-            'id': str(account.id),
-            'account_number': account.account_number,
-            'type': account.type,
-            'balance_cents': account.balance_cents,
-            'created_at': account.created_at.isoformat()
-        }), 200
+    except Exception as e:
+        app.logger.error(f"Failed to get account: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5002)
+    app.run(debug=True, host='0.0.0.0', port=SERVICE_PORT)

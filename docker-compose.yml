@@ -6,11 +6,11 @@ services:
     image: postgres:13
     container_name: bookkeeping-db
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: example
-      POSTGRES_DB: mydatabase
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-example}
+      POSTGRES_DB: ${DB_NAME:-mydatabase}
     ports:
-      - "5432:5432"
+      - "${DB_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./tables.sql:/docker-entrypoint-initdb.d/tables.sql
@@ -20,15 +20,15 @@ services:
       timeout: 5s
       retries: 5
 
-  # Zookeeper (required for Kafka)
+  # Zookeeper
   zookeeper:
     image: confluentinc/cp-zookeeper:7.4.0
     container_name: zookeeper
     environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_CLIENT_PORT: ${ZOOKEEPER_PORT:-2181}
       ZOOKEEPER_TICK_TIME: 2000
     ports:
-      - "2181:2181"
+      - "${ZOOKEEPER_PORT:-2181}:2181"
 
   # Kafka
   kafka:
@@ -37,11 +37,11 @@ services:
     depends_on:
       - zookeeper
     ports:
-      - "9092:9092"
-      - "9093:9093"
+      - "${KAFKA_PORT:-9092}:9092"
+      - "${KAFKA_EXTERNAL_PORT:-9093}:9093"
     environment:
       KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:${ZOOKEEPER_PORT:-2181}
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
@@ -58,19 +58,20 @@ services:
     image: redis:7-alpine
     container_name: redis
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
+      
 
-      # Prometheus - Monitoring
+  # Prometheus
   prometheus:
     image: prom/prometheus:latest
     container_name: prometheus
     ports:
-      - "9090:9090"
+      - "${PROMETHEUS_PORT:-9090}:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
       - prometheus_data:/prometheus
@@ -79,32 +80,31 @@ services:
       - '--storage.tsdb.path=/prometheus'
     restart: unless-stopped
 
-    # Grafana - Visualization Dashboard
+  # Grafana
   grafana:
     image: grafana/grafana:latest
     container_name: grafana
     ports:
-      - "3000:3000"
+      - "${GRAFANA_PORT:-3000}:3000"
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
       - GF_USERS_ALLOW_SIGN_UP=false
-      - GF_SERVER_ROOT_URL=http://localhost:3000
     volumes:
       - grafana_data:/var/lib/grafana
     restart: unless-stopped
     depends_on:
       - prometheus
 
-
-  # User Service (gRPC)
+# User Service (gRPC)
   user-service:
     build: ./user-service
     container_name: user-service
     ports:
-      - "5001:5001"
+      - "${USER_SERVICE_PORT:-5001}:5001"
     environment:
-      - DATABASE_URL=postgresql://postgres:example@db:5432/mydatabase
-      - JWT_SECRET_KEY=my-super-secret-jwt-key-2024
+      - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-example}@db:5432/${DB_NAME:-mydatabase}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-super-secret-jwt-key-2024}
+      - SERVICE_PORT=${USER_SERVICE_PORT:-5001}
     depends_on:
       db:
         condition: service_healthy
@@ -115,29 +115,30 @@ services:
     build: ./account-service
     container_name: account-service
     ports:
-      - "5002:5002"
+      - "${ACCOUNT_SERVICE_PORT:-5002}:5002"
     environment:
-      - DATABASE_URL=postgresql://postgres:example@db:5432/mydatabase
-      - JWT_SECRET_KEY=my-super-secret-jwt-key-2024
-      - USER_SERVICE_URL=user-service:5001
+      - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-example}@db:5432/${DB_NAME:-mydatabase}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-super-secret-jwt-key-2024}
+      - USER_SERVICE_URL=user-service:${USER_SERVICE_PORT:-5001}
+      - SERVICE_PORT=${ACCOUNT_SERVICE_PORT:-5002}
     depends_on:
       db:
         condition: service_healthy
     command: python app.py
 
   # Transaction Service (REST)
-# Transaction Service (REST)
   transaction-service:
     build: ./transaction-service
     container_name: transaction-service
     ports:
-      - "5003:5003"
+      - "${TRANSACTION_SERVICE_PORT:-5003}:5003"
     environment:
-      - DATABASE_URL=postgresql://postgres:example@db:5432/mydatabase
-      - JWT_SECRET_KEY=my-super-secret-jwt-key-2024
-      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-example}@db:5432/${DB_NAME:-mydatabase}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-super-secret-jwt-key-2024}
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:${KAFKA_PORT:-9092}
       - REDIS_HOST=redis
-      - REDIS_PORT=6379
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - SERVICE_PORT=${TRANSACTION_SERVICE_PORT:-5003}
     depends_on:
       db:
         condition: service_healthy
@@ -147,16 +148,16 @@ services:
         condition: service_healthy
     command: python app.py
 
-    # Transfer Processor (Kafka Consumer)
+  # Transfer Processor
   transfer-processor:
     build: ./transfer-processor
     container_name: transfer-processor
     environment:
-      - DATABASE_URL=postgresql://postgres:example@db:5432/mydatabase
-      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-example}@db:5432/${DB_NAME:-mydatabase}
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:${KAFKA_PORT:-9092}
       - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - NOTIFICATION_SERVICE_URL=http://notification-service:5004
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - NOTIFICATION_SERVICE_URL=http://notification-service:${NOTIFICATION_SERVICE_PORT:-5004}
     depends_on:
       db:
         condition: service_healthy
@@ -171,10 +172,11 @@ services:
     build: ./notification-service
     container_name: notification-service
     ports:
-      - "5004:5004"
+      - "${NOTIFICATION_SERVICE_PORT:-5004}:5004"
     environment:
-      - EMAIL_ENABLED=false
-      - SMS_ENABLED=false
+      - EMAIL_ENABLED=${EMAIL_ENABLED:-false}
+      - SMS_ENABLED=${SMS_ENABLED:-false}
+      - SERVICE_PORT=${NOTIFICATION_SERVICE_PORT:-5004}
     command: python app.py
 
 volumes:

@@ -4,10 +4,15 @@ package user;
 
 service UserService {
   rpc CreateUser (CreateUserRequest) returns (CreateUserResponse);
-  rpc ListUsers (ListUsersRequest) returns (ListUsersResponse);
-  rpc Login (LoginRequest) returns (LoginResponse);
+  rpc LoginUser (LoginUserRequest) returns (LoginUserResponse);
+  rpc VerifyToken (VerifyTokenRequest) returns (VerifyTokenResponse);
+  
+  // ✅ OTP endpoints חדשים
+  rpc VerifyOTP (VerifyOTPRequest) returns (VerifyOTPResponse);
+  rpc ResendOTP (ResendOTPRequest) returns (ResendOTPResponse);
 }
 
+// Existing messages
 message CreateUserRequest {
   string first_name = 1;
   string last_name = 2;
@@ -20,31 +25,43 @@ message CreateUserResponse {
   string message = 2;
 }
 
-message ListUsersRequest {
-  int32 page = 1;
-  int32 page_size = 2;
-}
-
-message User {
-  string id = 1;
-  string first_name = 2;
-  string last_name = 3;
-  string email = 4;
-  string created_at = 5;
-}
-
-message ListUsersResponse {
-  repeated User users = 1;
-  int32 total = 2;
-}
-
-message LoginRequest {
+message LoginUserRequest {
   string email = 1;
   string password = 2;
 }
 
-message LoginResponse {
-  string access_token = 1;
+message LoginUserResponse {
+  string token = 1;
   string user_id = 2;
-  string message = 3;
+}
+
+message VerifyTokenRequest {
+  string token = 1;
+}
+
+message VerifyTokenResponse {
+  bool valid = 1;
+  string user_id = 2;
+  string email = 3;
+}
+
+// ✅ OTP messages חדשים
+message VerifyOTPRequest {
+  string user_id = 1;
+  string otp_code = 2;
+}
+
+message VerifyOTPResponse {
+  bool success = 1;
+  string message = 2;
+  int32 attempts_left = 3;
+}
+
+message ResendOTPRequest {
+  string user_id = 1;
+}
+
+message ResendOTPResponse {
+  bool success = 1;
+  string message = 2;
 }

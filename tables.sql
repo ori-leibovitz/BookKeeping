@@ -71,3 +71,22 @@ ALTER TABLE "transfer_requests" ADD CONSTRAINT "transfer_requests_initiator_id_f
 ALTER TABLE "transfer_requests" ADD CONSTRAINT "transfer_requests_from_account_id_foreign" FOREIGN KEY("from_account_id") REFERENCES "accounts"("id");
 ALTER TABLE "transfer_requests" ADD CONSTRAINT "transfer_requests_to_account_id_foreign" FOREIGN KEY("to_account_id") REFERENCES "accounts"("id");
 ALTER TABLE "transfer_requests" ADD CONSTRAINT "transfer_requests_transaction_id_foreign" FOREIGN KEY("transaction_id") REFERENCES "transactions"("id");
+
+-- ✅ OTP Support: Add registration_status column
+ALTER TABLE users ADD COLUMN IF NOT EXISTS registration_status VARCHAR(20) DEFAULT 'pending';
+
+-- User Roles & Permissions
+ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(20) DEFAULT 'user';
+
+-- Valid roles: 'admin', 'user', 'viewer'
+-- Add check constraint
+DO $$ 
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint 
+        WHERE conname = 'users_role_check'
+    ) THEN
+        ALTER TABLE users ADD CONSTRAINT users_role_check 
+        CHECK (role IN ('admin', 'user', 'viewer'));
+    END IF;
+END $$;

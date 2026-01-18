@@ -1,0 +1,45 @@
+notepad .gitignore
+```
+
+אם Notepad אומר "הקובץ לא קיים, רוצה ליצור?" → **לחץ "Yes"**
+
+**אז העתק את התוכן הזה לתוך הקובץ:**
+```
+# Environment variables (IMPORTANT - Don't upload passwords!)
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Docker
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test outputs
+*.pyc
+htmlcov/
+.coverage
+.pytest_cache/
+
+# Secrets
+*.pem
+*.key
+secrets.yml
