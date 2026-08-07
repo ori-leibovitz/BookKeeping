@@ -21,6 +21,12 @@ scrape_configs:
       - targets: ['notification-service:5004']
     metrics_path: '/metrics'
 
+  # Fraud Detection Service (Kafka worker - metrics only, no REST API)
+  - job_name: 'fraud-detection-service'
+    static_configs:
+      - targets: ['fraud-detection-service:5005']
+    metrics_path: '/metrics'
+
   # Prometheus itself
   - job_name: 'prometheus'
     static_configs:

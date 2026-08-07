@@ -14,14 +14,18 @@ flowchart LR
     AC -- gRPC --> US
     TX -- events --> K[(Kafka)]
     K --> TP[Transfer Processor<br/>background worker]
-    K --> NT[Notification Service<br/>:5004]
+    TP -- HTTP --> NT[Notification Service<br/>:5004]
+    TX & TP -- transactions --> K
+    K -- transactions --> FD[Fraud Detection<br/>Isolation Forest :5005]
+    FD -- fraud-alerts --> K
     TP --> DB[(PostgreSQL)]
     TX --> DB
     AC --> DB
     US --> DB
+    FD --> DB
     TX --> R[(Redis<br/>cache)]
     TP --> R
-    P[Prometheus :9090] -.scrapes.-> TX & AC & NT
+    P[Prometheus :9090] -.scrapes.-> TX & AC & NT & FD
     G[Grafana :3000] --> P
 ```
 
@@ -31,7 +35,8 @@ flowchart LR
 | **account-service** | REST (Flask) | Account creation and queries, protected by auth middleware |
 | **transaction-service** | REST (Flask) | Deposits, withdrawals, transfers, approval workflow, history |
 | **transfer-processor** | Kafka consumer | Asynchronous execution of approved transfers |
-| **notification-service** | Kafka consumer | Event-driven user notifications |
+| **notification-service** | REST (Flask) | User notifications, called over HTTP by the transfer processor |
+| **fraud-detection-service** | Kafka consumer | Scores every transaction with a trained Isolation Forest |
 
 ## Key Features
 
@@ -39,6 +44,7 @@ flowchart LR
 - **Role-based access control** — `admin` / `user` / `viewer` roles enforced with a `@require_role` decorator on REST endpoints.
 - **Transfer approval workflow** — transfers move through `pending → approved → completed`; small transfers are auto-approved, larger ones require explicit approval (`/transfers/<id>/approve` or `/decline`).
 - **Event-driven processing** — Kafka decouples the transaction API from transfer execution and notifications.
+- **Fraud detection** — a trained Isolation Forest scores every transaction off the `transactions` stream, persists the verdict to `fraud_scores`, and publishes flagged transactions to `fraud-alerts`. Scoring is post-hoc: it observes and alerts, it never blocks. See [`ml-training/README.md`](ml-training/README.md) for the model, its calibration, and the deliberate limits of its feature set.
 - **Caching** — Redis caches transfer status for fast lookups.
 - **Observability** — every REST service exposes metrics via shared middleware; Prometheus scrapes them and Grafana visualizes.
 - **CI/CD** — GitHub Actions builds a Docker image per service (matrix build) and pushes to DockerHub on every push to `main`.
@@ -63,6 +69,7 @@ Services come up on:
 | Account service | 5002 |
 | Transaction service | 5003 |
 | Notification service | 5004 |
+| Fraud detection service (metrics only) | 5005 |
 | PostgreSQL | 5432 |
 | Kafka | 9092 / 9093 |
 | Redis | 6379 |
@@ -87,3 +94,21 @@ python test_api.py                 # basic API coverage
 
 - **Prometheus** — http://localhost:9090 (scrape targets defined in `prometheus.yml`)
 - **Grafana** — http://localhost:3000 (add Prometheus as a data source at `http://prometheus:9090`)
+
+Fraud metrics exposed by `fraud-detection-service`:
+
+| Metric | Type | |
+|---|---|---|
+| `fraud_transactions_scored_total{result}` | Counter | `flagged` / `clean` |
+| `fraud_score_distribution` | Histogram | score buckets, 0.05 resolution |
+| `fraud_scoring_duration_seconds` | Histogram | per-transaction scoring latency |
+| `fraud_scoring_errors_total{error_type}` | Counter | malformed / scoring / DB / alert failures |
+| `fraud_model_info{version,threshold}` | Gauge | always 1; labels identify the live model |
+
+The flagged rate is deliberately not a metric — it is a ratio of counters, which
+stays correct across restarts only when derived in PromQL:
+
+```promql
+rate(fraud_transactions_scored_total{result="flagged"}[5m])
+  / rate(fraud_transactions_scored_total[5m])
+```

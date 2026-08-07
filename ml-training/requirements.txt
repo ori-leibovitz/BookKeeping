@@ -1,0 +1,9 @@
+# These versions MUST match fraud-detection-service/requirements.txt exactly.
+# joblib artifacts are version-sensitive; scorer.py asserts the sklearn version
+# recorded in model_meta.json at startup and refuses to boot on a mismatch.
+scikit-learn==1.7.2
+numpy==2.3.5
+joblib==1.5.2
+
+# Training only -- deliberately not a runtime dependency of the service.
+pandas==2.3.3

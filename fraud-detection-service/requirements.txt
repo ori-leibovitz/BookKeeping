@@ -1,0 +1,11 @@
+# scikit-learn, numpy and joblib MUST match ml-training/requirements.txt exactly.
+# scorer.py asserts the sklearn version recorded in model_meta.json at startup
+# and refuses to boot on a mismatch, because a joblib artifact loaded under a
+# different version can deserialize into a subtly broken estimator.
+kafka-python==2.0.2
+sqlalchemy==2.0.23
+psycopg2-binary==2.9.9
+scikit-learn==1.7.2
+numpy==2.3.5
+joblib==1.5.2
+prometheus-client==0.19.0

@@ -1,0 +1,51 @@
+{
+  "model_version": "1.1.0",
+  "trained_at": "2026-08-07T04:27:55",
+  "sklearn_version": "1.7.2",
+  "feature_names": [
+    "amount_cents",
+    "log_amount",
+    "hour_of_day",
+    "day_of_week",
+    "is_weekend",
+    "is_night",
+    "type_deposit",
+    "type_withdrawal",
+    "type_transfer"
+  ],
+  "score_min": -0.26403130573317235,
+  "score_max": 0.10731170605592044,
+  "threshold": 0.65,
+  "training": {
+    "n_train": 35000,
+    "n_holdout": 15000,
+    "contamination": 0.01,
+    "n_estimators": 200,
+    "seed": 42
+  },
+  "holdout_metrics": {
+    "roc_auc": 0.9963256759184407,
+    "average_precision": 0.7899150219871892,
+    "precision": 0.4740484429065744,
+    "recall": 0.8782051282051282,
+    "f1": 0.6157303370786517,
+    "flagged_rate": 0.019266666666666668,
+    "recall_by_anomaly_kind": {
+      "huge_amount": {
+        "caught": 40,
+        "total": 52,
+        "recall": 0.7692307692307693
+      },
+      "huge_amount_odd_hour": {
+        "caught": 48,
+        "total": 48,
+        "recall": 1.0
+      },
+      "odd_hour": {
+        "caught": 49,
+        "total": 56,
+        "recall": 0.875
+      }
+    }
+  }
+}

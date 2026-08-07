@@ -72,6 +72,28 @@ ALTER TABLE "transfer_requests" ADD CONSTRAINT "transfer_requests_from_account_i
 ALTER TABLE "transfer_requests" ADD CONSTRAINT "transfer_requests_to_account_id_foreign" FOREIGN KEY("to_account_id") REFERENCES "accounts"("id");
 ALTER TABLE "transfer_requests" ADD CONSTRAINT "transfer_requests_transaction_id_foreign" FOREIGN KEY("transaction_id") REFERENCES "transactions"("id");
 
+-- ===== Fraud Detection =====
+-- כל ניקוד נשמר כאן; רק טרנזקציות מסומנות נשלחות ל-topic fraud-alerts.
+-- טבלה נפרדת ולא עמודה על transactions: שומרת את שירות ההונאה מחוץ לנתיב
+-- הכתיבה של טבלת הליבה, ומאפשרת ניקוד מחדש תחת model_version חדש בלי
+-- למחוק את הפסיקה הקודמת. לכן transaction_id אינו UNIQUE.
+CREATE TABLE IF NOT EXISTS "fraud_scores" (
+    "id" UUID NOT NULL PRIMARY KEY,
+    "transaction_id" UUID NOT NULL REFERENCES "transactions"("id"),
+    "score" NUMERIC(6,5) NOT NULL,
+    "is_flagged" BOOLEAN NOT NULL DEFAULT false,
+    "model_version" TEXT NOT NULL,
+    "features" JSONB,
+    "scored_at" TIMESTAMP(0) WITHOUT TIME ZONE NOT NULL,
+    -- Kafka is at-least-once, so a replay must not duplicate rows. Scoping the
+    -- constraint by model_version still allows a re-score under a new model.
+    CONSTRAINT "fraud_scores_txn_model_unique" UNIQUE ("transaction_id", "model_version")
+);
+
+CREATE INDEX IF NOT EXISTS "fraud_scores_transaction_id_index" ON "fraud_scores"("transaction_id");
+CREATE INDEX IF NOT EXISTS "fraud_scores_is_flagged_index" ON "fraud_scores"("is_flagged");
+CREATE INDEX IF NOT EXISTS "fraud_scores_scored_at_index" ON "fraud_scores"("scored_at");
+
 -- ✅ OTP Support: Add registration_status column
 ALTER TABLE users ADD COLUMN IF NOT EXISTS registration_status VARCHAR(20) DEFAULT 'pending';
 

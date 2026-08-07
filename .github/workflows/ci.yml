@@ -21,6 +21,8 @@ jobs:
           - account-service
           - transaction-service
           - notification-service
+          - transfer-processor
+          - fraud-detection-service
     
     steps:
       # Step 1: Checkout code
@@ -70,11 +72,13 @@ jobs:
           echo "================================================"
           echo "🎉 CI Pipeline Completed!"
           echo "================================================"
-          echo "📦 4 Docker images were built and pushed:"
+          echo "📦 6 Docker images were built and pushed:"
           echo "  - user-service"
           echo "  - account-service"
           echo "  - transaction-service"
           echo "  - notification-service"
+          echo "  - transfer-processor"
+          echo "  - fraud-detection-service"
           echo ""
           echo "🐳 Images available at:"
           echo "  https://hub.docker.com/u/${{ secrets.DOCKERHUB_USERNAME }}"

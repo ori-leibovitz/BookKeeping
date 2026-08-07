@@ -167,6 +167,26 @@ services:
         condition: service_healthy
     command: python processor.py
 
+  # Fraud Detection Service (Kafka consumer + ML scoring)
+  fraud-detection-service:
+    build: ./fraud-detection-service
+    container_name: fraud-detection-service
+    ports:
+      - "${FRAUD_SERVICE_PORT:-5005}:5005"   # Prometheus metrics only - no REST API
+    environment:
+      - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-example}@db:5432/${DB_NAME:-mydatabase}
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:${KAFKA_PORT:-9092}
+      - MODEL_PATH=/app/models/isolation_forest.joblib
+      - METRICS_PORT=5005
+      # Leave unset to use the threshold baked into model_meta.json at training time
+      - FRAUD_THRESHOLD=${FRAUD_THRESHOLD:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    command: python consumer.py
+
   # Notification Service (REST)
   notification-service:
     build: ./notification-service
