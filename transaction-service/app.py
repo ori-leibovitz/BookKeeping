@@ -40,6 +40,31 @@ engine = create_engine(DATABASE_URL)
 # סף אישור - העברות מעל $200 דורשות אישור ידני
 APPROVAL_THRESHOLD = 20000  # 20000 cents = $200
 
+
+def publish_transaction_event(transaction_id, initiator_id, amount, txn_type,
+                              from_account_id=None, to_account_id=None):
+    """Publish one event per row written to the transactions table.
+
+    Consumed by fraud-detection-service. Deliberately best-effort: this is called
+    after the DB commit and swallows its own errors, because a Kafka outage must
+    never fail a banking operation that already succeeded. This differs from the
+    transfer() producer, where the event drives the workflow and failing loud is
+    correct.
+    """
+    try:
+        kafka_producer.send('transactions', value={
+            'transaction_id': transaction_id,
+            'initiator_id': initiator_id,
+            'from_account_id': from_account_id,
+            'to_account_id': to_account_id,
+            'amount': amount,
+            'type': txn_type,
+            'timestamp': datetime.now().isoformat()
+        })
+        kafka_producer.flush()
+    except Exception as e:
+        app.logger.error(f"Failed to publish transaction event {transaction_id}: {e}")
+
 @contextmanager
 def get_db_connection():
     connection = engine.connect()
@@ -110,6 +135,11 @@ def deposit(account_id):
                 }
             )
         
+        publish_transaction_event(
+            transaction_id, user_id, amount, 'deposit',
+            to_account_id=account_id
+        )
+
         return jsonify({"message": "Deposit successful", "transaction_id": transaction_id}), 200
     
     except Exception as e:
@@ -175,6 +205,11 @@ def withdraw(account_id):
                 }
             )
         
+        publish_transaction_event(
+            transaction_id, user_id, amount, 'withdrawal',
+            from_account_id=account_id
+        )
+
         return jsonify({"message": "Withdrawal successful", "transaction_id": transaction_id}), 200
     
     except ValueError as e:

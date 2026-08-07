@@ -1,7 +1,7 @@
 import json
 import os
 from datetime import datetime
-from kafka import KafkaConsumer
+from kafka import KafkaConsumer, KafkaProducer
 from sqlalchemy import create_engine, text
 from contextlib import contextmanager
 import redis
@@ -28,6 +28,35 @@ engine = create_engine(DATABASE_URL)
 
 # Redis Client
 redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+
+# Kafka Producer - publishes completed transfers to the transactions stream
+kafka_producer = KafkaProducer(
+    bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+    value_serializer=lambda v: json.dumps(v).encode('utf-8')
+)
+
+
+def publish_transaction_event(transaction_id, initiator_id, amount, txn_type,
+                              from_account_id=None, to_account_id=None):
+    """Publish one event per row written to the transactions table.
+
+    Consumed by fraud-detection-service. Best-effort by design: called after the
+    DB commit and swallows its own errors, so a Kafka outage cannot fail or
+    re-run a transfer that already moved money.
+    """
+    try:
+        kafka_producer.send('transactions', value={
+            'transaction_id': transaction_id,
+            'initiator_id': initiator_id,
+            'from_account_id': from_account_id,
+            'to_account_id': to_account_id,
+            'amount': amount,
+            'type': txn_type,
+            'timestamp': datetime.now().isoformat()
+        })
+        kafka_producer.flush()
+    except Exception as e:
+        logger.error(f"Failed to publish transaction event {transaction_id}: {e}")
 
 @contextmanager
 def get_db_connection():
@@ -185,7 +214,13 @@ def process_transfer_request(message):
                         from_account.account_number,
                         to_account.account_number
                     )
-                
+
+            # מחוץ ל-with: הכסף כבר עבר ובוצע commit
+            publish_transaction_event(
+                transaction_id, str(transfer.initiator_id), amount, 'transfer',
+                from_account_id=from_account_id, to_account_id=to_account_id
+            )
+
         except Exception as e:
             logger.error(f"❌ Error processing transfer {transfer_request_id}: {e}")
             # עדכון ל-failed
