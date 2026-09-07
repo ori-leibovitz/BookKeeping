@@ -296,6 +296,11 @@ def transfer(from_account_id):
                 mapping={
                     'state': initial_state,
                     'amount': amount,
+                    # Cached so get_transfer_status() can authorize a cache hit without
+                    # touching the DB. Safe to cache only because initiator_id is written
+                    # once here and never updated afterwards - if it ever becomes mutable,
+                    # the status endpoint must authorize against the DB instead.
+                    'initiator_id': user_id,
                     'from_account_id': from_account_id,
                     'to_account_id': to_account_id,
                     'requires_approval': str(requires_approval)
@@ -345,8 +350,20 @@ def get_transfer_status(transfer_request_id):
     
     try:
         redis_data = redis_client.hgetall(f"transfer:{transfer_request_id}")
-        
-        if redis_data:
+
+        # The cache may only answer if it can prove ownership. Entries written before
+        # initiator_id was added to the hash - and keys resurrected by a writer after
+        # the TTL expired - carry no initiator_id, so they fall through to the database
+        # path below, which re-checks ownership against transfer_requests.
+        cached_initiator_id = redis_data.get('initiator_id') if redis_data else None
+
+        if cached_initiator_id:
+            # Admins bypass the ownership check, matching the database path.
+            # Non-owners get the same 404 the database path returns, so the response
+            # cannot be used to distinguish an existing transfer from a missing one.
+            if not is_admin() and cached_initiator_id != str(user_id):
+                return jsonify({"error": "Transfer request not found"}), 404
+
             return jsonify({
                 "transfer_request_id": transfer_request_id,
                 "state": redis_data.get('state'),
@@ -354,7 +371,7 @@ def get_transfer_status(transfer_request_id):
                 "requires_approval": redis_data.get('requires_approval') == 'True',
                 "source": "redis"
             }), 200
-        
+
         with get_db_connection() as connection:
             # Admin can see any transfer
             if is_admin():
