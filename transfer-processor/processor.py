@@ -123,17 +123,25 @@ def process_transfer_request(message):
                     logger.info(f"✅ Transfer {transfer_request_id} already completed")
                     return
                 
-                # קבלת פרטי חשבונות
-                from_account = connection.execute(
-                    text('SELECT * FROM accounts WHERE id = :id'),
-                    {'id': from_account_id}
-                ).fetchone()
-                
-                to_account = connection.execute(
-                    text('SELECT * FROM accounts WHERE id = :id'),
-                    {'id': to_account_id}
-                ).fetchone()
-                
+                # קבלת פרטי חשבונות - עם FOR UPDATE, כי בדיקת היתרה למטה ושני
+                # ה-UPDATE-ים שאחריה חייבים להיות אטומיים מול העברות מקבילות.
+                #
+                # שתי השורות ננעלות באותה טרנזקציה, ולכן הסדר קובע: העברה A→B
+                # והעברה B→A שרצות במקביל היו נועלות כל אחת חשבון אחד וממתינות
+                # לשנייה - deadlock, ש-Postgres שובר בהריגת אחת מהן (40P01) והיא
+                # מסומנת failed לשווא. מיון לפי account_id מבטיח שכל הטרנזקציות
+                # רוכשות את הנעילות באותו סדר גלובלי, כך שהמתנה מעגלית לא יכולה
+                # להיווצר. set() מטפל בהעברה עצמית, שבה שני המזהים זהים.
+                locked_accounts = {}
+                for account_id in sorted(set([from_account_id, to_account_id])):
+                    locked_accounts[account_id] = connection.execute(
+                        text('SELECT * FROM accounts WHERE id = :id FOR UPDATE'),
+                        {'id': account_id}
+                    ).fetchone()
+
+                from_account = locked_accounts[from_account_id]
+                to_account = locked_accounts[to_account_id]
+
                 # בדיקת יתרה (שוב, למקרה ששינו)
                 if from_account.balance_cents < amount:
                     logger.error(f"❌ Insufficient funds for transfer {transfer_request_id}")

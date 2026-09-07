@@ -161,16 +161,20 @@ def withdraw(account_id):
     
     try:
         with get_db_connection() as connection:
+            # FOR UPDATE: the balance check below and the UPDATE that follows must be
+            # atomic. Without the row lock two concurrent withdrawals both read the old
+            # balance, both pass the check, and both debit - overdrawing the account.
+            # The lock is held until get_db_connection() commits.
             # Admin can withdraw from any account
             if is_admin():
                 account = connection.execute(
-                    text('SELECT * FROM accounts WHERE id = :account_id'),
+                    text('SELECT * FROM accounts WHERE id = :account_id FOR UPDATE'),
                     {'account_id': account_id}
                 ).fetchone()
             else:
                 # Regular users can only withdraw from their own accounts
                 account = connection.execute(
-                    text('SELECT * FROM accounts WHERE id = :account_id AND owner_id = :user_id'),
+                    text('SELECT * FROM accounts WHERE id = :account_id AND owner_id = :user_id FOR UPDATE'),
                     {'account_id': account_id, 'user_id': user_id}
                 ).fetchone()
             
@@ -237,16 +241,21 @@ def transfer(from_account_id):
     
     try:
         with get_db_connection() as connection:
+            # FOR UPDATE: serialises this balance check against concurrent withdrawals
+            # and transfer requests on the same account, so the check cannot read a
+            # balance that another transaction is in the middle of changing. Only the
+            # source account is locked here - a single lock can never form a deadlock
+            # cycle with the two-account lock taken in transfer-processor.
             # Admin can transfer from any account
             if is_admin():
                 from_account = connection.execute(
-                    text('SELECT * FROM accounts WHERE id = :from_account_id'),
+                    text('SELECT * FROM accounts WHERE id = :from_account_id FOR UPDATE'),
                     {'from_account_id': from_account_id}
                 ).fetchone()
             else:
                 # Regular users can only transfer from their own accounts
                 from_account = connection.execute(
-                    text('SELECT * FROM accounts WHERE id = :from_account_id AND owner_id = :user_id'),
+                    text('SELECT * FROM accounts WHERE id = :from_account_id AND owner_id = :user_id FOR UPDATE'),
                     {'from_account_id': from_account_id, 'user_id': user_id}
                 ).fetchone()
             
